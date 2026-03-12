@@ -25,6 +25,7 @@ vi.mock('../../src/core/global-config.js', async (importOriginal) => {
   return {
     ...actual,
     getGlobalConfig: () => ({ ...mockState.config }),
+    getEffectiveConfig: () => ({ ...mockState.config }),
     saveGlobalConfig: vi.fn(),
   };
 });

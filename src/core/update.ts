@@ -34,7 +34,7 @@ import {
   type LegacyDetectionResult,
 } from './legacy-cleanup.js';
 import { isInteractive } from '../utils/interactive.js';
-import { getGlobalConfig, type Delivery } from './global-config.js';
+import { getEffectiveConfig, type Delivery } from './global-config.js';
 import { getProfileWorkflows, ALL_WORKFLOWS } from './profiles.js';
 import { getAvailableTools } from './available-tools.js';
 import {
@@ -93,11 +93,11 @@ export class UpdateCommand {
     const detectedTools = getAvailableTools(resolvedProjectPath);
     migrateIfNeededShared(resolvedProjectPath, detectedTools);
 
-    // 3. Read global config for profile/delivery
-    const globalConfig = getGlobalConfig();
-    const profile = globalConfig.profile ?? 'core';
-    const delivery: Delivery = globalConfig.delivery ?? 'both';
-    const profileWorkflows = getProfileWorkflows(profile, globalConfig.workflows);
+    // 3. Read effective config for profile/delivery
+    const effectiveConfig = getEffectiveConfig(resolvedProjectPath);
+    const profile = effectiveConfig.profile ?? 'core';
+    const delivery: Delivery = effectiveConfig.delivery ?? 'both';
+    const profileWorkflows = getProfileWorkflows(profile, effectiveConfig.workflows);
     const desiredWorkflows = profileWorkflows.filter((workflow): workflow is (typeof ALL_WORKFLOWS)[number] =>
       (ALL_WORKFLOWS as readonly string[]).includes(workflow)
     );

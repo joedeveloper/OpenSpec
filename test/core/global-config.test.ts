@@ -8,6 +8,9 @@ import {
   getGlobalConfigPath,
   getGlobalConfig,
   saveGlobalConfig,
+  readLocalConfig,
+  saveLocalConfig,
+  getEffectiveConfig,
   GLOBAL_CONFIG_DIR_NAME,
   GLOBAL_CONFIG_FILE_NAME
 } from '../../src/core/global-config.js';
@@ -327,6 +330,125 @@ describe('global-config', () => {
       const loadedConfig = getGlobalConfig();
 
       expect(loadedConfig.featureFlags).toEqual(originalConfig.featureFlags);
+    });
+  });
+
+  describe('readLocalConfig', () => {
+    it('should read valid local config JSON', () => {
+      const projectRoot = path.join(tempDir, 'project-a');
+      const localConfigPath = path.join(projectRoot, 'openspec', 'config.json');
+      fs.mkdirSync(path.dirname(localConfigPath), { recursive: true });
+      fs.writeFileSync(localConfigPath, JSON.stringify({ profile: 'custom', workflows: ['propose', 'verify'] }));
+
+      const config = readLocalConfig(projectRoot);
+
+      expect(config).toEqual({ profile: 'custom', workflows: ['propose', 'verify'] });
+    });
+
+    it('should return null when local config file does not exist', () => {
+      const projectRoot = path.join(tempDir, 'project-b');
+
+      const config = readLocalConfig(projectRoot);
+
+      expect(config).toBeNull();
+    });
+
+    it('should return null and log warning for malformed local config JSON', () => {
+      const projectRoot = path.join(tempDir, 'project-c');
+      const localConfigPath = path.join(projectRoot, 'openspec', 'config.json');
+      fs.mkdirSync(path.dirname(localConfigPath), { recursive: true });
+      fs.writeFileSync(localConfigPath, '{ malformed }');
+
+      const config = readLocalConfig(projectRoot);
+
+      expect(config).toBeNull();
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON'));
+    });
+
+    it('should read an empty object local config', () => {
+      const projectRoot = path.join(tempDir, 'project-d');
+      const localConfigPath = path.join(projectRoot, 'openspec', 'config.json');
+      fs.mkdirSync(path.dirname(localConfigPath), { recursive: true });
+      fs.writeFileSync(localConfigPath, '{}');
+
+      const config = readLocalConfig(projectRoot);
+
+      expect(config).toEqual({});
+    });
+  });
+
+  describe('saveLocalConfig', () => {
+    it('should create openspec directory and write local config with trailing newline', () => {
+      const projectRoot = path.join(tempDir, 'project-save-local');
+      const localConfigPath = path.join(projectRoot, 'openspec', 'config.json');
+
+      saveLocalConfig(projectRoot, { profile: 'custom', workflows: ['propose'] });
+
+      expect(fs.existsSync(path.join(projectRoot, 'openspec'))).toBe(true);
+      const content = fs.readFileSync(localConfigPath, 'utf-8');
+      expect(content.endsWith('\n')).toBe(true);
+      expect(JSON.parse(content)).toEqual({ profile: 'custom', workflows: ['propose'] });
+    });
+  });
+
+  describe('getEffectiveConfig', () => {
+    it('should let local workflows override global workflows', () => {
+      process.env.XDG_CONFIG_HOME = tempDir;
+      saveGlobalConfig({ featureFlags: {}, profile: 'core', delivery: 'both', workflows: ['propose', 'explore'] });
+      const projectRoot = path.join(tempDir, 'project-effective-a');
+      saveLocalConfig(projectRoot, { workflows: ['propose', 'explore', 'verify'] });
+
+      const config = getEffectiveConfig(projectRoot);
+
+      expect(config.workflows).toEqual(['propose', 'explore', 'verify']);
+      expect(config.delivery).toBe('both');
+    });
+
+    it('should let local delivery override global delivery', () => {
+      process.env.XDG_CONFIG_HOME = tempDir;
+      saveGlobalConfig({ featureFlags: {}, profile: 'core', delivery: 'both' });
+      const projectRoot = path.join(tempDir, 'project-effective-b');
+      saveLocalConfig(projectRoot, { delivery: 'commands' });
+
+      const config = getEffectiveConfig(projectRoot);
+
+      expect(config.delivery).toBe('commands');
+      expect(config.profile).toBe('core');
+    });
+
+    it('should let local profile override global profile', () => {
+      process.env.XDG_CONFIG_HOME = tempDir;
+      saveGlobalConfig({ featureFlags: {}, profile: 'core', delivery: 'both' });
+      const projectRoot = path.join(tempDir, 'project-effective-c');
+      saveLocalConfig(projectRoot, { profile: 'custom', workflows: ['propose', 'apply', 'verify'] });
+
+      const config = getEffectiveConfig(projectRoot);
+
+      expect(config.profile).toBe('custom');
+      expect(config.workflows).toEqual(['propose', 'apply', 'verify']);
+    });
+
+    it('should fall back to global config when local config does not exist', () => {
+      process.env.XDG_CONFIG_HOME = tempDir;
+      saveGlobalConfig({ featureFlags: {}, profile: 'custom', delivery: 'skills', workflows: ['explore'] });
+      const projectRoot = path.join(tempDir, 'project-effective-d');
+
+      const config = getEffectiveConfig(projectRoot);
+
+      expect(config).toEqual({ featureFlags: {}, profile: 'custom', delivery: 'skills', workflows: ['explore'] });
+    });
+
+    it('should override only keys present in partial local config', () => {
+      process.env.XDG_CONFIG_HOME = tempDir;
+      saveGlobalConfig({ featureFlags: {}, profile: 'custom', delivery: 'both', workflows: ['propose', 'sync'] });
+      const projectRoot = path.join(tempDir, 'project-effective-e');
+      saveLocalConfig(projectRoot, { workflows: ['propose', 'verify'] });
+
+      const config = getEffectiveConfig(projectRoot);
+
+      expect(config.profile).toBe('custom');
+      expect(config.delivery).toBe('both');
+      expect(config.workflows).toEqual(['propose', 'verify']);
     });
   });
 });
