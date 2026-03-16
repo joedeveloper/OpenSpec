@@ -48,3 +48,10 @@ export function getProfileWorkflows(
   }
   return CORE_WORKFLOWS;
 }
+
+export function mergeWorkflows(
+  profileWorkflows: readonly string[],
+  addWorkflows: string[]
+): string[] {
+  return [...new Set([...profileWorkflows, ...addWorkflows])];
+}

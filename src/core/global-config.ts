@@ -153,3 +153,46 @@ export function saveGlobalConfig(config: GlobalConfig): void {
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
+
+export function readLocalConfig(projectRoot: string): Partial<GlobalConfig> | null {
+  const localConfigPath = path.join(projectRoot, 'openspec', GLOBAL_CONFIG_FILE_NAME);
+
+  try {
+    if (!fs.existsSync(localConfigPath)) {
+      return null;
+    }
+
+    const content = fs.readFileSync(localConfigPath, 'utf-8');
+    return JSON.parse(content) as Partial<GlobalConfig>;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      console.error(`Warning: Invalid JSON in ${localConfigPath}, ignoring local config`);
+    }
+    return null;
+  }
+}
+
+export function saveLocalConfig(projectRoot: string, config: Partial<GlobalConfig>): void {
+  const localConfigDir = path.join(projectRoot, 'openspec');
+  const localConfigPath = path.join(localConfigDir, GLOBAL_CONFIG_FILE_NAME);
+
+  if (!fs.existsSync(localConfigDir)) {
+    fs.mkdirSync(localConfigDir, { recursive: true });
+  }
+
+  fs.writeFileSync(localConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+}
+
+export function getEffectiveConfig(projectRoot: string): GlobalConfig {
+  const globalConfig = getGlobalConfig();
+  const localConfig = readLocalConfig(projectRoot);
+
+  if (!localConfig) {
+    return globalConfig;
+  }
+
+  return {
+    ...globalConfig,
+    ...localConfig,
+  };
+}

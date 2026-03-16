@@ -4,6 +4,7 @@ import {
   CORE_WORKFLOWS,
   ALL_WORKFLOWS,
   getProfileWorkflows,
+  mergeWorkflows,
 } from '../../src/core/profiles.js';
 
 describe('profiles', () => {
@@ -58,6 +59,28 @@ describe('profiles', () => {
     it('should return empty array for custom profile with empty customWorkflows', () => {
       const result = getProfileWorkflows('custom', []);
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('mergeWorkflows', () => {
+    it('should merge without overlap', () => {
+      const result = mergeWorkflows(['propose', 'explore'], ['verify', 'continue']);
+      expect(result).toEqual(['propose', 'explore', 'verify', 'continue']);
+    });
+
+    it('should deduplicate full overlap', () => {
+      const result = mergeWorkflows(['propose', 'explore'], ['propose', 'explore']);
+      expect(result).toEqual(['propose', 'explore']);
+    });
+
+    it('should deduplicate partial overlap', () => {
+      const result = mergeWorkflows(['propose', 'explore', 'apply'], ['explore', 'verify']);
+      expect(result).toEqual(['propose', 'explore', 'apply', 'verify']);
+    });
+
+    it('should return profile workflows when addWorkflows is empty', () => {
+      const result = mergeWorkflows(['propose', 'explore'], []);
+      expect(result).toEqual(['propose', 'explore']);
     });
   });
 });
