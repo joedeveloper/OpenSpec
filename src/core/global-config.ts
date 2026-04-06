@@ -154,6 +154,85 @@ export function saveGlobalConfig(config: GlobalConfig): void {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
 
+/**
+ * Validate and coerce the shape of a local configuration object.
+ * Returns a sanitised Partial<GlobalConfig>, or null if the top-level
+ * value is not an object.
+ */
+function validateLocalConfigSchema(
+  raw: unknown,
+  localConfigPath: string
+): Partial<GlobalConfig> | null {
+  if (typeof raw !== 'object' || raw === null) {
+    console.error(
+      `Warning: Invalid schema in ${localConfigPath} (expected an object), ignoring local config`
+    );
+    return null;
+  }
+
+  const obj = raw as { [key: string]: unknown };
+  const result: Partial<GlobalConfig> = {};
+
+  // featureFlags: keep only boolean entries if object-like
+  if (Object.prototype.hasOwnProperty.call(obj, 'featureFlags')) {
+    const ff = obj.featureFlags;
+    if (typeof ff === 'object' && ff !== null) {
+      const flags: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(ff as Record<string, unknown>)) {
+        if (typeof value === 'boolean') {
+          flags[key] = value;
+        }
+      }
+      result.featureFlags = flags;
+    } else {
+      console.error(
+        `Warning: Invalid "featureFlags" in ${localConfigPath} (expected object of booleans), ignoring featureFlags`
+      );
+    }
+  }
+
+  // profile: must be 'core' or 'custom' if present
+  if (Object.prototype.hasOwnProperty.call(obj, 'profile')) {
+    const profile = obj.profile;
+    if (profile === 'core' || profile === 'custom') {
+      result.profile = profile;
+    } else {
+      console.error(
+        `Warning: Invalid "profile" in ${localConfigPath} (expected "core" or "custom"), ignoring profile`
+      );
+    }
+  }
+
+  // delivery: must be 'both', 'skills', or 'commands' if present
+  if (Object.prototype.hasOwnProperty.call(obj, 'delivery')) {
+    const delivery = obj.delivery;
+    if (delivery === 'both' || delivery === 'skills' || delivery === 'commands') {
+      result.delivery = delivery;
+    } else {
+      console.error(
+        `Warning: Invalid "delivery" in ${localConfigPath} (expected "both", "skills", or "commands"), ignoring delivery`
+      );
+    }
+  }
+
+  // workflows: must be an array of strings if present
+  if (Object.prototype.hasOwnProperty.call(obj, 'workflows')) {
+    const workflows = obj.workflows;
+    if (
+      Array.isArray(workflows) &&
+      workflows.every((w) => typeof w === 'string')
+    ) {
+      result.workflows = workflows as string[];
+    } else {
+      console.error(
+        `Warning: Invalid "workflows" in ${localConfigPath} (expected array of strings), ignoring workflows`
+      );
+    }
+  }
+
+  return result;
+}
+
 export function readLocalConfig(projectRoot: string): Partial<GlobalConfig> | null {
   const localConfigPath = path.join(projectRoot, 'openspec', GLOBAL_CONFIG_FILE_NAME);
 
@@ -163,7 +242,9 @@ export function readLocalConfig(projectRoot: string): Partial<GlobalConfig> | nu
     }
 
     const content = fs.readFileSync(localConfigPath, 'utf-8');
-    return JSON.parse(content) as Partial<GlobalConfig>;
+    const parsed = JSON.parse(content) as unknown;
+    const validated = validateLocalConfigSchema(parsed, localConfigPath);
+    return validated;
   } catch (error) {
     if (error instanceof SyntaxError) {
       console.error(`Warning: Invalid JSON in ${localConfigPath}, ignoring local config`);
