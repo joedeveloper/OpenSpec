@@ -388,7 +388,7 @@ describe('InitCommand', () => {
       const readOnlyDir = path.join(testDir, 'readonly');
       await fs.mkdir(readOnlyDir);
 
-      const originalWriteFile = fs.writeFile;
+      const originalWriteFile = fs.writeFile.bind(fs);
       vi.spyOn(fs, 'writeFile').mockImplementation(
         async (filePath: any, ...args: any[]) => {
           if (
@@ -397,7 +397,7 @@ describe('InitCommand', () => {
           ) {
             throw new Error('EACCES: permission denied');
           }
-          return originalWriteFile.call(fs, filePath, ...args);
+          return originalWriteFile(filePath, args[0], args[1]);
         }
       );
 
@@ -738,6 +738,101 @@ describe('InitCommand - profile and detection features', () => {
 
     const skillFile = path.join(testDir, '.claude', 'skills', 'openspec-explore', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(true);
+  });
+
+  describe('--add-workflows', () => {
+    it('should parse and deduplicate valid workflow IDs', () => {
+      const initCommand = new InitCommand({ addWorkflows: 'verify,continue,verify' });
+
+      const resolved = (initCommand as any).resolveAddWorkflows();
+
+      expect(resolved).toEqual(['verify', 'continue']);
+    });
+
+    it('should reject invalid workflow IDs with available IDs in message', () => {
+      const initCommand = new InitCommand({ addWorkflows: 'invalid-workflow' });
+
+      expect(() => (initCommand as any).resolveAddWorkflows()).toThrow(/Available workflow IDs/);
+    });
+
+    it('should reject empty add-workflows value', () => {
+      const initCommand = new InitCommand({ addWorkflows: '   ' });
+
+      expect(() => (initCommand as any).resolveAddWorkflows()).toThrow(/requires at least one workflow ID/);
+    });
+
+    it('should reject mixed valid and invalid workflow IDs', () => {
+      const initCommand = new InitCommand({ addWorkflows: 'continue,bogus' });
+
+      expect(() => (initCommand as any).resolveAddWorkflows()).toThrow(/Invalid workflow ID\(s\): bogus/);
+    });
+
+    it('should create local config.json with combined workflows', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', addWorkflows: 'continue,verify' });
+
+      await initCommand.execute(testDir);
+
+      const localConfigPath = path.join(testDir, 'openspec', 'config.json');
+      expect(await fileExists(localConfigPath)).toBe(true);
+      const config = JSON.parse(await fs.readFile(localConfigPath, 'utf-8'));
+      expect(config.profile).toBe('custom');
+      expect(config.workflows).toEqual(['propose', 'explore', 'apply', 'archive', 'continue', 'verify']);
+    });
+
+    it('should merge into existing local config and preserve unrelated fields', async () => {
+      const localConfigPath = path.join(testDir, 'openspec', 'config.json');
+      await fs.mkdir(path.dirname(localConfigPath), { recursive: true });
+      await fs.writeFile(
+        localConfigPath,
+        JSON.stringify({ delivery: 'commands', profile: 'custom', workflows: ['continue'] }, null, 2) + '\n',
+        'utf-8'
+      );
+
+      const initCommand = new InitCommand({ tools: 'claude', addWorkflows: 'verify' });
+      await initCommand.execute(testDir);
+
+      const config = JSON.parse(await fs.readFile(localConfigPath, 'utf-8'));
+      expect(config.delivery).toBe('commands');
+      expect(config.profile).toBe('custom');
+      expect(config.workflows).toEqual(['continue', 'verify']);
+    });
+
+    it('should overwrite previous local workflows with newly computed workflows', async () => {
+      const localConfigPath = path.join(testDir, 'openspec', 'config.json');
+      await fs.mkdir(path.dirname(localConfigPath), { recursive: true });
+      await fs.writeFile(
+        localConfigPath,
+        JSON.stringify({ profile: 'custom', workflows: ['continue', 'verify'] }, null, 2) + '\n',
+        'utf-8'
+      );
+
+      const initCommand = new InitCommand({ tools: 'claude', addWorkflows: 'sync' });
+      await initCommand.execute(testDir);
+
+      const config = JSON.parse(await fs.readFile(localConfigPath, 'utf-8'));
+      expect(config.workflows).toEqual(['continue', 'verify', 'sync']);
+    });
+
+    it('should write local config in non-interactive mode without force', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', addWorkflows: 'verify' });
+
+      await initCommand.execute(testDir);
+
+      const localConfigPath = path.join(testDir, 'openspec', 'config.json');
+      expect(await fileExists(localConfigPath)).toBe(true);
+      const config = JSON.parse(await fs.readFile(localConfigPath, 'utf-8'));
+      expect(config.workflows).toContain('verify');
+    });
+
+    it('should write local config to the target path', async () => {
+      const targetPath = path.join(testDir, 'dev_docs');
+      const initCommand = new InitCommand({ tools: 'claude', addWorkflows: 'continue,verify' });
+
+      await initCommand.execute(targetPath);
+
+      const localConfigPath = path.join(targetPath, 'openspec', 'config.json');
+      expect(await fileExists(localConfigPath)).toBe(true);
+    });
   });
 });
 

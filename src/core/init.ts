@@ -41,8 +41,18 @@ import {
   generateSkillContent,
   type ToolSkillStatus,
 } from './shared/index.js';
-import { getGlobalConfig, type Delivery, type Profile } from './global-config.js';
-import { getProfileWorkflows, CORE_WORKFLOWS, ALL_WORKFLOWS } from './profiles.js';
+import {
+  getEffectiveConfig,
+  readLocalConfig,
+  saveLocalConfig,
+  type Delivery,
+  type Profile,
+} from './global-config.js';
+import {
+  getProfileWorkflows,
+  ALL_WORKFLOWS,
+  mergeWorkflows,
+} from './profiles.js';
 import { getAvailableTools } from './available-tools.js';
 import { migrateIfNeeded } from './migration.js';
 
@@ -83,6 +93,7 @@ type InitCommandOptions = {
   force?: boolean;
   interactive?: boolean;
   profile?: string;
+  addWorkflows?: string;
 };
 
 // -----------------------------------------------------------------------------
@@ -94,12 +105,14 @@ export class InitCommand {
   private readonly force: boolean;
   private readonly interactiveOption?: boolean;
   private readonly profileOverride?: string;
+  private readonly addWorkflowsArg?: string;
 
   constructor(options: InitCommandOptions = {}) {
     this.toolsArg = options.tools;
     this.force = options.force ?? false;
     this.interactiveOption = options.interactive;
     this.profileOverride = options.profile;
+    this.addWorkflowsArg = options.addWorkflows;
   }
 
   async execute(targetPath: string): Promise<void> {
@@ -144,14 +157,37 @@ export class InitCommand {
     // Create directory structure and config
     await this.createDirectoryStructure(openspecPath, extendMode);
 
+    const resolvedConfig = this.resolveEffectiveGenerationConfig(projectPath);
+
     // Generate skills and commands for each tool
-    const results = await this.generateSkillsAndCommands(projectPath, validatedTools);
+    const results = await this.generateSkillsAndCommands(
+      projectPath,
+      validatedTools,
+      resolvedConfig.delivery,
+      resolvedConfig.workflows
+    );
+
+    if (this.addWorkflowsArg !== undefined) {
+      const existingLocalConfig = readLocalConfig(projectPath) ?? {};
+      saveLocalConfig(projectPath, {
+        ...existingLocalConfig,
+        profile: 'custom',
+        workflows: [...resolvedConfig.workflows],
+      });
+    }
 
     // Create config.yaml if needed
     const configStatus = await this.createConfig(openspecPath, extendMode);
 
     // Display success message
-    this.displaySuccessMessage(projectPath, validatedTools, results, configStatus);
+    this.displaySuccessMessage(
+      projectPath,
+      validatedTools,
+      results,
+      configStatus,
+      resolvedConfig.delivery,
+      resolvedConfig.workflows
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -187,6 +223,61 @@ export class InitCommand {
     }
 
     throw new Error(`Invalid profile "${this.profileOverride}". Available profiles: core, custom`);
+  }
+
+  private resolveAddWorkflows(): string[] {
+    if (this.addWorkflowsArg === undefined) {
+      return [];
+    }
+
+    const raw = this.addWorkflowsArg.trim();
+    if (raw.length === 0) {
+      throw new Error('The --add-workflows option requires at least one workflow ID.');
+    }
+
+    const workflowIds = raw
+      .split(',')
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+
+    if (workflowIds.length === 0) {
+      throw new Error('The --add-workflows option requires at least one workflow ID.');
+    }
+
+    const invalidWorkflowIds = workflowIds.filter((id) =>
+      (ALL_WORKFLOWS as readonly string[]).find((workflowId) => workflowId === id) === undefined
+    );
+    if (invalidWorkflowIds.length > 0) {
+      throw new Error(
+        `Invalid workflow ID(s): ${invalidWorkflowIds.join(', ')}. Available workflow IDs: ${(ALL_WORKFLOWS as readonly string[]).join(', ')}`
+      );
+    }
+
+    const deduped: string[] = [];
+    for (const workflowId of workflowIds) {
+      if (!deduped.includes(workflowId)) {
+        deduped.push(workflowId);
+      }
+    }
+
+    return deduped;
+  }
+
+  private resolveEffectiveGenerationConfig(projectPath: string): {
+    delivery: Delivery;
+    workflows: readonly string[];
+  } {
+    const effectiveConfig = getEffectiveConfig(projectPath);
+    const profile: Profile = this.resolveProfileOverride() ?? effectiveConfig.profile ?? 'core';
+    const delivery: Delivery = effectiveConfig.delivery ?? 'both';
+    const profileWorkflows = getProfileWorkflows(profile, effectiveConfig.workflows);
+    const addWorkflows = this.resolveAddWorkflows();
+    const workflows = mergeWorkflows(profileWorkflows, addWorkflows);
+
+    return {
+      delivery,
+      workflows,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -493,7 +584,9 @@ export class InitCommand {
 
   private async generateSkillsAndCommands(
     projectPath: string,
-    tools: Array<{ value: string; name: string; skillsDir: string; wasConfigured: boolean }>
+    tools: Array<{ value: string; name: string; skillsDir: string; wasConfigured: boolean }>,
+    delivery: Delivery,
+    workflows: readonly string[]
   ): Promise<{
     createdTools: typeof tools;
     refreshedTools: typeof tools;
@@ -508,12 +601,6 @@ export class InitCommand {
     const commandsSkipped: string[] = [];
     let removedCommandCount = 0;
     let removedSkillCount = 0;
-
-    // Read global config for profile and delivery settings (use --profile override if set)
-    const globalConfig = getGlobalConfig();
-    const profile: Profile = this.resolveProfileOverride() ?? globalConfig.profile ?? 'core';
-    const delivery: Delivery = globalConfig.delivery ?? 'both';
-    const workflows = getProfileWorkflows(profile, globalConfig.workflows);
 
     // Get skill and command templates filtered by profile workflows
     const shouldGenerateSkills = delivery !== 'commands';
@@ -634,7 +721,9 @@ export class InitCommand {
       removedCommandCount: number;
       removedSkillCount: number;
     },
-    configStatus: 'created' | 'exists' | 'skipped'
+    configStatus: 'created' | 'exists' | 'skipped',
+    delivery: Delivery,
+    workflows: readonly string[]
   ): void {
     console.log();
     console.log(chalk.bold('OpenSpec Setup Complete'));
@@ -651,10 +740,6 @@ export class InitCommand {
     // Show counts (respecting profile filter)
     const successfulTools = [...results.createdTools, ...results.refreshedTools];
     if (successfulTools.length > 0) {
-      const globalConfig = getGlobalConfig();
-      const profile: Profile = (this.profileOverride as Profile) ?? globalConfig.profile ?? 'core';
-      const delivery: Delivery = globalConfig.delivery ?? 'both';
-      const workflows = getProfileWorkflows(profile, globalConfig.workflows);
       const toolDirs = [...new Set(successfulTools.map((t) => t.skillsDir))].join(', ');
       const skillCount = delivery !== 'commands' ? getSkillTemplates(workflows).length : 0;
       const commandCount = delivery !== 'skills' ? getCommandContents(workflows).length : 0;
@@ -697,9 +782,7 @@ export class InitCommand {
     }
 
     // Getting started (task 7.6: show propose if in profile)
-    const globalCfg = getGlobalConfig();
-    const activeProfile: Profile = (this.profileOverride as Profile) ?? globalCfg.profile ?? 'core';
-    const activeWorkflows = [...getProfileWorkflows(activeProfile, globalCfg.workflows)];
+    const activeWorkflows = [...workflows];
     console.log();
     if (activeWorkflows.includes('propose')) {
       console.log(chalk.bold('Getting started:'));

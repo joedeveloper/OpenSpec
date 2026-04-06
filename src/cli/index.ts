@@ -94,9 +94,10 @@ program
   .command('init [path]')
   .description('Initialize OpenSpec in your project')
   .option('--tools <tools>', toolsOptionDescription)
+  .option('--add-workflows <workflows>', 'Add comma-separated workflow IDs on top of the resolved profile')
   .option('--force', 'Auto-cleanup legacy files without prompting')
   .option('--profile <profile>', 'Override global config profile (core or custom)')
-  .action(async (targetPath = '.', options?: { tools?: string; force?: boolean; profile?: string }) => {
+  .action(async (targetPath = '.', options?: { tools?: string; addWorkflows?: string; force?: boolean; profile?: string }) => {
     try {
       // Validate that the path is a valid directory
       const resolvedPath = path.resolve(targetPath);
@@ -120,6 +121,7 @@ program
       const { InitCommand } = await import('../core/init.js');
       const initCommand = new InitCommand({
         tools: options?.tools,
+        addWorkflows: options?.addWorkflows,
         force: options?.force,
         profile: options?.profile,
       });
